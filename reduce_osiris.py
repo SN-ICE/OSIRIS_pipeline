@@ -186,8 +186,8 @@ def set_manual_extraction(pypeit_file: Path, spec1d_name: str,
 
     # ── Pass 1: locate the header line ────────────────────────────────────
     hdr_idx = None
-    hdr_parts =         # raw split fields (preserving whitespace)
-    hdr_names =         # stripped column names
+    hdr_parts = None    # raw split fields (preserving whitespace)
+    hdr_names = None    # stripped column names
     for i, line in enumerate(block_lines):
         if 'filename' in line and '|' in line:
             hdr_idx  = i
@@ -232,7 +232,7 @@ def set_manual_extraction(pypeit_file: Path, spec1d_name: str,
             new_block[i] = '|'.join(parts) + '\n'
 
         elif not has_manual and len(parts) < n_cols:
-            # Other data rows: pad withwhen we just added the manual col
+            # Other data rows: pad with empty field when we just added the manual col
             parts.append('')
             new_block[i] = '|'.join(parts) + '\n'
 
@@ -504,7 +504,7 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     sciimg = skymodel = None
     with fits.open(spec2d_path) as h:
         for ext in h:
-            if ext.data isor np.ndim(ext.data) != 2:
+            if ext.data is None or np.ndim(ext.data) != 2:
                 continue
             name = ext.name.upper()
             if 'SCIIMG' in name and sciimg is None:
@@ -514,7 +514,7 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     if sciimg is None:
         print(f"  WARNING: SCIIMG not found in {spec2d_path.name} – skipping trace plot")
         return True, None
-    img = (sciimg - skymodel) if skymodel is notelse sciimg
+    img = (sciimg - skymodel) if skymodel is not None else sciimg
     nspec, nspat = img.shape
 
     # ── read trace ─────────────────────────────────────────────────────────
@@ -819,7 +819,7 @@ def plot_final_spectra(ob_dir: Path) -> None:
         fig, ax = plt.subplots(figsize=(14, 5))
 
         m = re.match(r'(.+?)_(R\d{4}[BR])_(\d{8})', txt.stem)
-        label = txt.stem if m iselse f"{m.group(1)}  {m.group(2)}  {m.group(3)}"
+        label = txt.stem if m is None else f"{m.group(1)}  {m.group(2)}  {m.group(3)}"
         if 'combined' in txt.stem:
             label += '  (combined)'
 
@@ -1054,7 +1054,7 @@ def main():
                     cands = sorted(science_dir.glob(f'spec2d_{raw_m.group(1)}-*.fits'))
                     spec2d_path = cands[0] if cands else None
 
-                if spec2d_path isor not spec2d_path.exists():
+                if spec2d_path is None or not spec2d_path.exists():
                     print(f"  WARNING: spec2d not found for {sci_spec1d.name} – skipping plot")
                     continue
 
