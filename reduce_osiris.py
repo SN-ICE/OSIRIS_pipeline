@@ -529,16 +529,9 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     # ── orange: use custom peak-finding trace ──────────────────────────────
     if ans == 'o' and has_custom:
         spat    = float(np.nanmedian(full_trace))
-        sp_def  = nspec // 2
-        try:
-            sp_in = input(f"    Spectral pixel (Enter = {sp_def}): ").strip()
-            spec_px = float(sp_in) if sp_in else float(sp_def)
-            fw_in   = input("    FWHM in pixels (Enter = 4.0): ").strip()
-            fwhm    = float(fw_in) if fw_in else 4.0
-        except ValueError:
-            print("  Invalid input – skipping manual extraction")
-            return True, None
-        print(f"  Using custom (orange) trace median: spat={spat:.1f}")
+        spec_px = float(nspec // 2)
+        fwhm    = 4.0
+        print(f"  Using custom (orange) trace: spat={spat:.1f}, spec={spec_px:.0f}, fwhm={fwhm}")
         return False, (spat, spec_px, fwhm)
 
     # ── manual: user types in the spatial position ─────────────────────────
