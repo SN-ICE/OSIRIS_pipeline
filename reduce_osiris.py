@@ -712,17 +712,20 @@ def create_filtered_rawdir(ob_dir: Path) -> Path:
 
     Files with GRISM=OPEN are acquisition images (through-slit pointing checks)
     and must be excluded so pypeit_setup does not create spurious configurations
-    for them.  Returns the path to the staging directory.
+    for them.  Handles both .fits and .fits.gz files.
+    Returns the path to the staging directory.
     """
     raw_dir = ob_dir / '_raw_pypeit'
     raw_dir.mkdir(exist_ok=True)
-    # Remove stale links from a previous run
-    for old in raw_dir.glob('*.fits'):
+    # Remove stale links from a previous run (both .fits and .fits.gz)
+    for old in list(raw_dir.glob('*.fits')) + list(raw_dir.glob('*.fits.gz')):
         old.unlink()
 
     n_kept = n_excl = 0
     for sd in RAW_SUBDIRS:
-        for f in sorted((ob_dir / sd).glob('*.fits')):
+        all_fits = sorted((ob_dir / sd).glob('*.fits')) + \
+                   sorted((ob_dir / sd).glob('*.fits.gz'))
+        for f in all_fits:
             try:
                 with fits.open(f) as h:
                     grism = str(h[0].header.get('GRISM', '')).strip().upper()
