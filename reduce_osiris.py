@@ -274,7 +274,8 @@ def write_flux_file(flux_txt: Path, sci_basenames: list, sensfunc_rel: str):
         f.write('flux end\n')
 
 
-def export_ascii(spec1d_fits: Path, out_txt: Path, ob_dir: Path):
+def export_ascii(spec1d_fits: Path, out_txt: Path, ob_dir: Path,
+                 wave_min: float = None, wave_max: float = None):
     with fits.open(spec1d_fits) as h:
         data = h[1].data
         wave = data['OPT_WAVE'].astype(float)
@@ -284,6 +285,17 @@ def export_ascii(spec1d_fits: Path, out_txt: Path, ob_dir: Path):
         else:
             print(f"  WARNING: OPT_FLAM_SIG not in {spec1d_fits.name}; errors set to 0")
             err = np.zeros_like(flux)
+
+    mask = np.ones(len(wave), dtype=bool)
+    if wave_min is not None:
+        mask &= wave >= wave_min
+    if wave_max is not None:
+        mask &= wave <= wave_max
+    if not mask.all():
+        print(f"  Wavelength clip: {wave[mask].min():.1f} - {wave[mask].max():.1f} A "
+              f"({mask.sum()}/{len(wave)} pixels kept)")
+    wave, flux, err = wave[mask], flux[mask], err[mask]
+
     meta = read_obs_meta(spec1d_fits, ob_dir)
     hdr  = build_header(meta)
     np.savetxt(str(out_txt), np.column_stack([wave, flux, err]),
@@ -782,6 +794,12 @@ def parse_args():
     ap.add_argument('--find-min-max', type=int, nargs=2, default=None,
                     metavar=('MIN', 'MAX'),
                     help='Pixel range for object finding, e.g. --find-min-max 1200 2000')
+    ap.add_argument('--wave-min', type=float, default=None,
+                    help='Blue wavelength cutoff [Å] applied at ASCII export '
+                         '(e.g. 6200 for R1000R on old OSIRIS where grating '
+                         'efficiency is poor below ~6500 Å)')
+    ap.add_argument('--wave-max', type=float, default=None,
+                    help='Red wavelength cutoff [Å] applied at ASCII export')
     ap.add_argument('--overwrite', action='store_true',
                     help='Pass -o to run_pypeit to overwrite existing Masters/Science')
     ap.add_argument('--no-interactive', action='store_true',
@@ -962,7 +980,8 @@ def main():
                 print(f"  WARNING: could not parse target/date from {spec1d.name}")
                 continue
             out_txt = ob_dir / f'{target}_{grating}_{date}.txt'
-            export_ascii(science_dir / spec1d.name, out_txt, ob_dir)
+            export_ascii(science_dir / spec1d.name, out_txt, ob_dir,
+                        wave_min=args.wave_min, wave_max=args.wave_max)
             exported.append((out_txt, target, date))
 
         if args.skip_telluric:
