@@ -515,19 +515,19 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
 
     has_custom = custom is not None
     if has_custom:
-        prompt = f"\n  [{target}] Which trace to use? [green / orange / manual / skip] (default green): "
+        prompt = f"\n  [{target}] Which trace to use? [g]reen, [o]range, [m]anual or [s]kip? "
     else:
-        prompt = f"\n  [{target}] Is the extracted trace correct? [green / manual / skip] (default green): "
+        prompt = f"\n  [{target}] Which trace to use? [g]reen, [m]anual or [s]kip? "
 
-    ans = _ask(prompt, default='green')
+    ans = _ask(prompt, default='g')
     plt.close('all')
 
     # ── green: accept PypeIt trace as-is ──────────────────────────────────
-    if ans in ('green', 'g', 'skip', ''):
+    if ans in ('g', 's', ''):
         return True, None
 
     # ── orange: use custom peak-finding trace ──────────────────────────────
-    if ans in ('orange', 'o') and has_custom:
+    if ans == 'o' and has_custom:
         spat    = float(np.nanmedian(full_trace))
         sp_def  = nspec // 2
         try:
