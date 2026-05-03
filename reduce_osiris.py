@@ -710,11 +710,20 @@ def plot_final_spectra(ob_dir: Path) -> None:
 def create_filtered_rawdir(ob_dir: Path) -> Path:
     """Build _raw_pypeit/ with symlinks to every non-OPEN-grism file.
 
-    Files with GRISM=OPEN are acquisition images (through-slit pointing checks)
-    and must be excluded so pypeit_setup does not create spurious configurations
-    for them.  Handles both .fits and .fits.gz files.
+    Files with GRISM=OPEN in object/ or stds/ are acquisition images
+    (through-slit pointing checks) and must be excluded so pypeit_setup
+    does not create spurious configurations for them.
+
+    Calibration frames (arc/, bias/, flat/) are always kept regardless of
+    their GRISM keyword — on the old OSIRIS CCD, bias frames carry GRISM=OPEN
+    in their headers even though they are genuine calibrations.
+
+    Handles both .fits and .fits.gz files.
     Returns the path to the staging directory.
     """
+    # Only filter GRISM=OPEN from these subdirs; calibration dirs are never filtered
+    FILTER_SUBDIRS = {'object', 'stds'}
+
     raw_dir = ob_dir / '_raw_pypeit'
     raw_dir.mkdir(exist_ok=True)
     # Remove stale links from a previous run (both .fits and .fits.gz)
@@ -726,12 +735,17 @@ def create_filtered_rawdir(ob_dir: Path) -> Path:
         all_fits = sorted((ob_dir / sd).glob('*.fits')) + \
                    sorted((ob_dir / sd).glob('*.fits.gz'))
         for f in all_fits:
-            try:
-                with fits.open(f) as h:
-                    grism = str(h[0].header.get('GRISM', '')).strip().upper()
-            except Exception:
-                grism = ''
-            if grism == 'OPEN':
+            exclude = False
+            if sd in FILTER_SUBDIRS:
+                try:
+                    with fits.open(f) as h:
+                        grism = str(h[0].header.get('GRISM', '')).strip().upper()
+                except Exception:
+                    grism = ''
+                if grism == 'OPEN':
+                    exclude = True
+
+            if exclude:
                 n_excl += 1
             else:
                 link = raw_dir / f.name
