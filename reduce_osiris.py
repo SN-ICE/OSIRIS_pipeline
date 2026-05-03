@@ -513,29 +513,38 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     plt.show(block=False)
     plt.pause(0.5)
 
-    ans = _ask(f"\n  [{target}] Is the extracted trace the correct object? [y/n/skip] (default y): ")
+    has_custom = custom is not None
+    if has_custom:
+        prompt = f"\n  [{target}] Which trace to use? [green / orange / manual / skip] (default green): "
+    else:
+        prompt = f"\n  [{target}] Is the extracted trace correct? [green / manual / skip] (default green): "
+
+    ans = _ask(prompt, default='green')
     plt.close('all')
 
-    if ans in ('y', 'skip', ''):
+    # ── green: accept PypeIt trace as-is ──────────────────────────────────
+    if ans in ('green', 'g', 'skip', ''):
         return True, None
 
-    # ── get manual position ────────────────────────────────────────────────
-    # Suggest the custom-trace median as the default spatial position
-    spat_default = None
-    if custom is not None:
-        spat_default = int(np.nanmedian(full_trace))
+    # ── orange: use custom peak-finding trace ──────────────────────────────
+    if ans in ('orange', 'o') and has_custom:
+        spat    = float(np.nanmedian(full_trace))
+        sp_def  = nspec // 2
+        try:
+            sp_in = input(f"    Spectral pixel (Enter = {sp_def}): ").strip()
+            spec_px = float(sp_in) if sp_in else float(sp_def)
+            fw_in   = input("    FWHM in pixels (Enter = 4.0): ").strip()
+            fwhm    = float(fw_in) if fw_in else 4.0
+        except ValueError:
+            print("  Invalid input – skipping manual extraction")
+            return True, None
+        print(f"  Using custom (orange) trace median: spat={spat:.1f}")
+        return False, (spat, spec_px, fwhm)
 
+    # ── manual: user types in the spatial position ─────────────────────────
     print("  Enter the position of the correct object (read from the plot):")
     try:
-        sp_prompt = f"    Spatial pixel"
-        if spat_default is not None:
-            sp_prompt += f" (Enter = {spat_default} from custom trace)"
-        sp_prompt += " : "
-        sp_in_spat = input(sp_prompt).strip()
-        spat = float(sp_in_spat) if sp_in_spat else (float(spat_default) if spat_default else None)
-        if spat is None:
-            print("  No spatial pixel given — skipping manual extraction")
-            return True, None
+        spat    = float(input("    Spatial pixel : "))
         sp_def  = nspec // 2
         sp_in   = input(f"    Spectral pixel (Enter = {sp_def}): ").strip()
         spec_px = float(sp_in) if sp_in else float(sp_def)
