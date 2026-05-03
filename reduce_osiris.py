@@ -156,28 +156,89 @@ def patch_pypeit_params(pypeit_file: Path, maxnumber_sci: int,
 
 def set_manual_extraction(pypeit_file: Path, spec1d_name: str,
                           spat: float, spec_px: float, fwhm: float, det: int = 1):
-    """Update the manual column for one science frame in the .pypeit file."""
+    """Add / update the manual extraction column in the .pypeit data block.
+
+    Works regardless of whether the pypeit file uses leading/trailing '|' per
+    row (older PypeIt) or bare '|'-separated values (newer PypeIt), and whether
+    'manual' already exists as a column from a previous run.
+
+    Strategy:
+      - Parse the column-header line to count fields and detect 'manual'.
+      - Place values by column index (split/rejoin on '|'), never by string
+        appending, so the last existing column is never clobbered.
+    """
     manual_str = f'{det}:{spat:.3f}:{spec_px:.3f}:{fwhm:.1f}'
-    # Extract the raw numeric ID that starts the filename in the data block
+
     m = re.match(r'spec1d_(\d+)-', spec1d_name)
     if not m:
         print(f"  WARNING: cannot parse raw ID from {spec1d_name}")
         return
     raw_id = m.group(1)
 
-    new_lines = []
-    for line in pypeit_file.read_text().splitlines(keepends=True):
-        if raw_id in line and 'science' in line and '|' in line:
-            stripped = line.rstrip('\n').rstrip()
-            if stripped.endswith('|'):
-                line = stripped + f' {manual_str}\n'
+    text = pypeit_file.read_text()
+    if 'data read' not in text or 'data end' not in text:
+        print(f"  WARNING: data block not found in {pypeit_file.name}")
+        return
+
+    pre, rest = text.split('data read', 1)
+    block, post = rest.split('data end', 1)
+    block_lines = block.splitlines(keepends=True)
+
+    # ── Pass 1: locate the header line ────────────────────────────────────
+    hdr_idx = None
+    hdr_parts = None          # raw split fields (preserving whitespace)
+    hdr_names = None          # stripped column names
+    for i, line in enumerate(block_lines):
+        if 'filename' in line and '|' in line:
+            hdr_idx  = i
+            hdr_parts = line.rstrip('\n').split('|')
+            hdr_names = [c.strip() for c in hdr_parts]
+            break
+
+    if hdr_idx is None:
+        print(f"  WARNING: header line not found in {pypeit_file.name}")
+        return
+
+    has_manual = 'manual' in hdr_names
+    n_cols = len(hdr_parts)   # expected number of '|'-split fields per data row
+
+    # ── Pass 2: rewrite the block ─────────────────────────────────────────
+    new_block = list(block_lines)
+
+    if not has_manual:
+        # Extend header with a 'manual' column
+        new_block[hdr_idx] = '|'.join(hdr_parts).rstrip() + ' | manual\n'
+        n_cols += 1
+
+    for i, line in enumerate(new_block):
+        if i == hdr_idx:
+            continue
+        s = line.rstrip('\n').rstrip()
+        if not s or '|' not in s:
+            continue                   # blank line, path line, etc.
+
+        parts = s.split('|')
+
+        if raw_id in s:
+            # Science target row: set value at the manual column position
+            # Pad to n_cols-1 fields first if the row is short (shouldn't happen,
+            # but guards against pre-existing corruption)
+            while len(parts) < n_cols - 1:
+                parts.append(' None ')
+            if len(parts) < n_cols:
+                parts.append(f' {manual_str} ')
             else:
-                # Replace existing manual value
-                parts = stripped.rsplit('|', 1)
-                line = parts[0] + f'| {manual_str}\n'
-        new_lines.append(line)
-    pypeit_file.write_text(''.join(new_lines))
-    print(f"  Manual extraction set: det={det}, spat={spat:.1f}, spec={spec_px:.1f}, fwhm={fwhm:.1f}")
+                parts[-1] = f' {manual_str} '
+            new_block[i] = '|'.join(parts) + '\n'
+
+        elif not has_manual and len(parts) < n_cols:
+            # Other data rows: pad with None when we just added the manual col
+            parts.append(' None ')
+            new_block[i] = '|'.join(parts) + '\n'
+
+    pypeit_file.write_text(pre + 'data read' + ''.join(new_block) + 'data end' + post)
+    print(f"  Manual extraction set: det={det}, spat={spat:.1f}, "
+          f"spec={spec_px:.1f}, fwhm={fwhm:.1f}")
 
 
 # ── Observation metadata ───────────────────────────────────────────────────
