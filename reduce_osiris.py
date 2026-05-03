@@ -120,7 +120,8 @@ def copy_bias_from(src: Path, dst: Path):
 
 
 def patch_pypeit_params(pypeit_file: Path, maxnumber_sci: int,
-                        snr_thresh, find_fwhm, find_min_max, spectrograph: str):
+                        snr_thresh, find_fwhm, find_min_max, spectrograph: str,
+                        trace_npoly: int = None):
     rdx_block = f'[rdx]\n    spectrograph = {spectrograph}\n'
     if spectrograph == 'gtc_osiris':
         rdx_block += '    detnum = 2\n'
@@ -130,6 +131,7 @@ def patch_pypeit_params(pypeit_file: Path, maxnumber_sci: int,
     if find_fwhm    is not None: reduce_block += f'        find_fwhm = {find_fwhm}\n'
     if find_min_max is not None:
         reduce_block += f'        find_min_max = {find_min_max[0]}, {find_min_max[1]}\n'
+    if trace_npoly  is not None: reduce_block += f'        trace_npoly = {trace_npoly}\n'
 
     text = pypeit_file.read_text()
     if '# Setup' not in text:
@@ -383,6 +385,52 @@ def _ask(prompt: str, default: str = 'y') -> str:
     return ans if ans else default
 
 
+def _compute_trace(img: np.ndarray, init_trace: np.ndarray,
+                   step: int = 50, half_window: int = 20):
+    """Estimate the object trace by finding the peak-flux spatial pixel
+    in blocks of `step` spectral rows, searching within `half_window`
+    pixels of the initial (PypeIt) trace.
+
+    Returns (sample_rows, sample_peaks, full_trace) where full_trace is
+    a polynomial fit evaluated at every spectral row.  Returns None if
+    fewer than 3 valid samples are found.
+    """
+    nspec, nspat = img.shape
+    rows, peaks = [], []
+
+    for r0 in range(0, nspec, step):
+        r1 = min(r0 + step, nspec)
+        mid = (r0 + r1) // 2
+
+        # Anchor: median of PypeIt trace in this row range (fall back to centre)
+        if init_trace is not None:
+            anchor = int(np.nanmedian(init_trace[r0:r1]))
+        else:
+            anchor = nspat // 2
+
+        lo = max(0, anchor - half_window)
+        hi = min(nspat, anchor + half_window + 1)
+
+        profile = np.nanmedian(img[r0:r1, lo:hi], axis=0)
+        valid = np.isfinite(profile)
+        if not np.any(valid):
+            continue
+
+        peak_spat = lo + int(np.argmax(np.where(valid, profile, -np.inf)))
+        rows.append(float(mid))
+        peaks.append(float(peak_spat))
+
+    if len(rows) < 3:
+        return None
+
+    rows_arr  = np.array(rows)
+    peaks_arr = np.array(peaks)
+    deg       = min(4, len(rows_arr) - 1)
+    coeffs    = np.polyfit(rows_arr, peaks_arr, deg)
+    full_spec = np.arange(nspec, dtype=float)
+    return rows_arr, peaks_arr, np.polyval(coeffs, full_spec)
+
+
 def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     """Show 2D spectrum + spatial profile with extracted trace.
 
@@ -427,10 +475,22 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     ax2d.imshow(img, origin='lower', aspect='auto', cmap='RdYlBu_r',
                 vmin=vmin, vmax=vmax,
                 extent=[0, nspat - 1, 0, nspec - 1])
+
+    # PypeIt polynomial trace (green)
     if trace_spat is not None:
         ax2d.plot(trace_spat, np.arange(nspec), color='lime',
-                  lw=1.5, label=f'trace (spat≈{np.nanmedian(trace_spat):.0f})')
-        ax2d.legend(fontsize=9, loc='upper right')
+                  lw=1.5, label=f'PypeIt trace (spat≈{np.nanmedian(trace_spat):.0f})')
+
+    # Custom peak-finding trace (orange): max flux every ~50 rows ± 20 px window
+    custom = _compute_trace(img, trace_spat)
+    if custom is not None:
+        sample_rows, sample_peaks, full_trace = custom
+        ax2d.scatter(sample_peaks, sample_rows, s=12, color='orange',
+                     zorder=5, label='peak samples')
+        ax2d.plot(full_trace, np.arange(nspec), color='orange',
+                  lw=1.5, ls='--', label=f'custom trace (spat≈{np.nanmedian(full_trace):.0f})')
+
+    ax2d.legend(fontsize=9, loc='upper right')
     ax2d.set_xlabel('Spatial pixel')
     ax2d.set_ylabel('Spectral pixel')
     ax2d.set_title('Sky-subtracted 2D spectrum')
@@ -439,8 +499,12 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
     axsp.plot(profile, np.arange(nspat), 'k', lw=1)
     if trace_spat is not None:
         med = int(np.nanmedian(trace_spat))
-        axsp.axhline(med, color='lime', lw=2, label=f'spat={med}')
-        axsp.legend(fontsize=9)
+        axsp.axhline(med, color='lime', lw=2, label=f'PypeIt spat={med}')
+    if custom is not None:
+        med_custom = int(np.nanmedian(full_trace))
+        axsp.axhline(med_custom, color='orange', lw=2, ls='--',
+                     label=f'custom spat={med_custom}')
+    axsp.legend(fontsize=9)
     axsp.set_xlabel('Median counts')
     axsp.set_title('Spatial profile')
     axsp.yaxis.tick_right()
@@ -456,9 +520,22 @@ def validate_trace(spec2d_path: Path, spec1d_path: Path, target: str) -> tuple:
         return True, None
 
     # ── get manual position ────────────────────────────────────────────────
+    # Suggest the custom-trace median as the default spatial position
+    spat_default = None
+    if custom is not None:
+        spat_default = int(np.nanmedian(full_trace))
+
     print("  Enter the position of the correct object (read from the plot):")
     try:
-        spat    = float(input("    Spatial pixel : "))
+        sp_prompt = f"    Spatial pixel"
+        if spat_default is not None:
+            sp_prompt += f" (Enter = {spat_default} from custom trace)"
+        sp_prompt += " : "
+        sp_in_spat = input(sp_prompt).strip()
+        spat = float(sp_in_spat) if sp_in_spat else (float(spat_default) if spat_default else None)
+        if spat is None:
+            print("  No spatial pixel given — skipping manual extraction")
+            return True, None
         sp_def  = nspec // 2
         sp_in   = input(f"    Spectral pixel (Enter = {sp_def}): ").strip()
         spec_px = float(sp_in) if sp_in else float(sp_def)
@@ -782,6 +859,9 @@ def parse_args():
     ap.add_argument('--find-min-max', type=int, nargs=2, default=None,
                     metavar=('MIN', 'MAX'),
                     help='Pixel range for object finding, e.g. --find-min-max 1200 2000')
+    ap.add_argument('--trace-npoly', type=int, default=None,
+                    help='Polynomial order for object trace fitting in PypeIt '
+                         '(default: PypeIt built-in = 5; increase to 7-8 for curved traces)')
     ap.add_argument('--overwrite', action='store_true',
                     help='Pass -o to run_pypeit to overwrite existing Masters/Science')
     ap.add_argument('--no-interactive', action='store_true',
@@ -851,7 +931,8 @@ def main():
             else:
                 print(f"    WARNING: could not find bias in any configuration!")
         patch_pypeit_params(pf, args.maxnumber_sci, args.snr_thresh,
-                            args.find_fwhm, args.find_min_max, args.spectrograph)
+                            args.find_fwhm, args.find_min_max, args.spectrograph,
+                            args.trace_npoly)
         print(f"    Grating: {get_dispname(pf)}")
 
     # ── 3. run_pypeit ────────────────────────────────────────────────────
