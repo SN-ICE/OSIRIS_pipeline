@@ -1043,26 +1043,35 @@ def main():
         if interactive:
             print(f"\n{'─'*50}\nStep 3b — trace validation\n{'─'*50}")
             need_rerun = False
-            for sci_spec1d in sci_files:
-                target, _ = parse_spec1d_meta(sci_spec1d.name)
-                spec1d_path = science_dir / sci_spec1d.name
 
-                # Find matching spec2d
-                raw_m = re.match(r'spec1d_(\d+)-', sci_spec1d.name)
+            def _validate_one(spec1d_file, label):
+                """Validate trace for one spec1d; return True if rerun needed."""
+                spec1d_path = science_dir / spec1d_file.name
+                raw_m = re.match(r'spec1d_(\d+)-', spec1d_file.name)
                 spec2d_path = None
                 if raw_m:
                     cands = sorted(science_dir.glob(f'spec2d_{raw_m.group(1)}-*.fits'))
                     spec2d_path = cands[0] if cands else None
-
                 if spec2d_path is None or not spec2d_path.exists():
-                    print(f"  WARNING: spec2d not found for {sci_spec1d.name} – skipping plot")
-                    continue
-
-                ok, manual_params = validate_trace(spec2d_path, spec1d_path,
-                                                   target or sci_spec1d.name)
+                    print(f"  WARNING: spec2d not found for {spec1d_file.name} – skipping plot")
+                    return False
+                ok, manual_params = validate_trace(spec2d_path, spec1d_path, label)
                 if not ok and manual_params is not None:
                     spat, spec_px, fwhm = manual_params
-                    set_manual_extraction(pf, sci_spec1d.name, spat, spec_px, fwhm, det)
+                    set_manual_extraction(pf, spec1d_file.name, spat, spec_px, fwhm, det)
+                    return True
+                return False
+
+            # Standard star
+            print(f"\n  --- Standard star ---")
+            if _validate_one(std_spec1d, f'STD {std_spec1d.name}'):
+                need_rerun = True
+
+            # Science frames
+            print(f"\n  --- Science frames ---")
+            for sci_spec1d in sci_files:
+                target, _ = parse_spec1d_meta(sci_spec1d.name)
+                if _validate_one(sci_spec1d, target or sci_spec1d.name):
                     need_rerun = True
 
             if need_rerun:
