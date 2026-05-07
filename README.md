@@ -1,4 +1,4 @@
-# GTC_PypeIt
+# OSIRIS_pipeline
 
 Reduction tools for GTC/OSIRIS long-slit spectroscopy and broadband imaging.
 
